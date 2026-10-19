@@ -10,27 +10,34 @@ Vexy's own ports are labelled, so you can tell at a glance whether the Vexy webs
 
 | Command | What it does |
 | --- | --- |
-| `ports` | Live dashboard that refreshes every 3 seconds |
-| `ports list` | Table of every listening port with its program, project, framework, memory and uptime |
-| `ports check 3000` | Everything about the program on port 3000: PID, full command, project folder, framework, memory, uptime |
+| `ports` | Live dashboard. `--interval 5` refreshes every 5 seconds (default 3) |
+| `ports list` | Table of every listening port with its program, project, framework and version, memory and uptime |
+| `ports check 3000` | Everything about the program on port 3000: PID, full command, project folder, framework, memory, uptime. Details Windows won't give say "unavailable" |
 | `ports kill 3000` | Stops the program on port 3000 after asking. Add `--force` if it won't close, `--yes` to skip the question |
 | `ports open 3000` | Opens http://localhost:3000 in your browser |
+| `ports watch` | Logs every program that starts or stops listening, with the time. `--interval 5` to look less often |
 
-`ports` never stops parts of Windows itself, like System or svchost.exe.
+Add `--json` to `list`, `check`, `kill` or `watch` for output other tools and AI agents can read. See [AGENTS.md](AGENTS.md) for the JSON shape and exit codes.
+
+In tables, Windows' own programs are dimmed and anything using more than 500 MB of memory is red. `ports` never stops parts of Windows itself, like System or svchost.exe.
+
+"Directory" is the project folder found from the program's command line. Windows doesn't let one program read another program's working directory, so when there's no project it says "unavailable".
 
 ### Dashboard keys
 
 | Key | Does |
 | --- | --- |
 | ↑ ↓ | Pick a port |
-| K | Stop the picked program (asks first; F force-stops) |
+| K | Stop the picked program (asks first; y stops it gracefully, F force-stops) |
 | o | Open it in your browser |
-| e | Open its project folder in VS Code (or File Explorer) |
+| e | Open its project folder in Cursor, VS Code, or File Explorer, whichever you have |
 | f | Filter: all ports, dev servers only, or Vexy only |
-| s | Sort by port, memory or uptime |
-| / | Search; Esc clears |
+| s | Sort by port, memory, uptime or project |
+| / | Search by port, program, command or project; Esc clears |
 | r | Refresh now |
 | q | Quit |
+
+When a new program starts listening, the dashboard says so and rings the terminal bell.
 
 ## Install
 

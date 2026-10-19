@@ -2,7 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 // The code project a program was started from, worked out from its command line.
-export type Project = { name: string; framework?: string; dir: string };
+export type Project = { name: string; framework?: string; frameworkVersion?: string; dir: string };
+
+// "Next.js 16.3.8", or just "Next.js" when the version is unknown.
+export function frameworkLabel(project?: Project): string {
+  if (!project?.framework) return "";
+  return project.frameworkVersion ? `${project.framework} ${project.frameworkVersion}` : project.framework;
+}
 
 // Dependencies that tell us which framework a project uses, most specific first.
 const FRAMEWORKS: [string, string][] = [
@@ -62,9 +68,28 @@ function describe(dir: string, command: string): Project {
     // An unreadable package.json still tells us where the project is.
   }
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-  const framework = FRAMEWORKS.find(([dep]) => dep in deps && command.toLowerCase().includes(dep.split("/").pop()!))?.[1]
-    ?? FRAMEWORKS.find(([dep]) => dep in deps)?.[1];
-  return { name: typeof pkg.name === "string" && pkg.name ? pkg.name : path.basename(dir), framework, dir };
+  const match = FRAMEWORKS.find(([dep]) => dep in deps && command.toLowerCase().includes(dep.split("/").pop()!))
+    ?? FRAMEWORKS.find(([dep]) => dep in deps);
+  const name = typeof pkg.name === "string" && pkg.name ? pkg.name : path.basename(dir);
+  if (!match) return { name, dir };
+  const [dep, framework] = match;
+  return { name, framework, frameworkVersion: installedVersion(dir, dep) ?? declaredVersion(deps[dep]), dir };
+}
+
+// The version actually installed in node_modules, like 16.3.8.
+function installedVersion(dir: string, dep: string): string | undefined {
+  try {
+    const { version } = JSON.parse(fs.readFileSync(path.join(dir, "node_modules", dep, "package.json"), "utf8"));
+    return typeof version === "string" ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Falls back to package.json's range, like "^16.3.0" → 16.3.0.
+function declaredVersion(range: unknown): string | undefined {
+  const m = typeof range === "string" ? range.match(/\d+(\.\d+){0,2}/) : null;
+  return m?.[0];
 }
 
 // Python dev servers say what they are in the command itself.
