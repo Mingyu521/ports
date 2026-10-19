@@ -20,7 +20,7 @@ export async function scanPorts(): Promise<Listener[]> {
   return combine(parseNetstat(netstat4 + "\n" + netstat6), parseTasklist(tasklist));
 }
 
-async function run(command: string, args: string[]): Promise<string> {
+export async function run(command: string, args: string[]): Promise<string> {
   try {
     const { stdout } = await execa(command, args, { windowsHide: true });
     return stdout;

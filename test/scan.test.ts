@@ -61,13 +61,13 @@ test("names programs that closed between the two scans", () => {
 test("the table labels Vexy's ports and counts the rows", () => {
   const out = plain(renderTable(combine(parseNetstat(NETSTAT), parseTasklist(TASKLIST))));
   const lines = out.split("\n");
-  assert.match(lines[0], /^PORT\s+PID\s+PROCESS\s+VEXY$/);
+  assert.match(lines[0], /^PORT\s+PID\s+PROCESS\s+PROJECT$/);
   assert.match(out, /3000\s+8812\s+node\.exe\s+Vexy website/);
   assert.match(out, /54322\s+5120\s+com\.docker\.backend\.exe\s+Vexy database/);
   assert.match(lines.at(-1)!, /4 listening ports/);
 });
 
-test("the table leaves out the Vexy column when Vexy isn't running", () => {
+test("the table leaves out empty columns", () => {
   const out = plain(renderTable([{ port: 135, pid: 1032, process: "svchost.exe" }]));
   assert.match(out.split("\n")[0], /^PORT\s+PID\s+PROCESS$/);
   assert.match(out, /1 listening port$/);

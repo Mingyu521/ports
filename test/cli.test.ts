@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 // These run the built command (npm run build first), like a person would.
-const run = promisify(execFile);
+const run = promisify(execFileCb);
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 test("help explains the list command", async () => {
@@ -39,4 +39,29 @@ test("explains clearly when it can't scan", { skip: process.platform === "win32"
     assert.match(e.stderr, /Couldn't scan ports\. ports works on Windows only/);
     return true;
   });
+});
+
+test("checks and stops a throwaway server", { skip: process.platform !== "win32" && "needs Windows" }, async () => {
+  // A separate node process listening on a free port, so stopping it is safe.
+  const server = spawn(process.execPath, ["-e", "const s=require('http').createServer().listen(0,()=>console.log(s.address().port))"]);
+  const port = await new Promise<number>((ok) => server.stdout.once("data", (d) => ok(Number(String(d).trim()))));
+  const exited = new Promise((ok) => server.once("exit", ok));
+  const env = { ...process.env, FORCE_COLOR: "0" };
+
+  const { stdout: check } = await run(process.execPath, [CLI, "check", String(port)], { env });
+  assert.match(check, new RegExp(`Port ${port}`));
+  assert.match(check, new RegExp(`PID\\s+${server.pid}`));
+  assert.match(check, /node\.exe/);
+  assert.match(check, new RegExp(`ports kill ${port}`));
+
+  const { stdout: killed } = await run(process.execPath, [CLI, "kill", String(port), "--yes", "--force"], { env });
+  assert.match(killed, new RegExp(`Stopped node\\.exe \\(PID ${server.pid}\\) on port ${port}`));
+  await exited;
+
+  const { stdout: after } = await run(process.execPath, [CLI, "check", String(port)], { env });
+  assert.match(after, new RegExp(`Nothing is listening on port ${port}`));
+});
+
+test("refuses a port number that isn't one", async () => {
+  await assert.rejects(run(process.execPath, [CLI, "check", "99999"]), (e: { stderr: string }) => /port number from 1 to 65535/.test(e.stderr));
 });
