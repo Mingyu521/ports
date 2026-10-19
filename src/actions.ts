@@ -4,6 +4,14 @@ import { ScanError } from "./scan.ts";
 // Programs Windows needs to keep running. Stopping them can crash the computer.
 const PROTECTED = new Set(["system", "system idle process", "smss.exe", "csrss.exe", "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe", "svchost.exe"]);
 
+// Windows' own programs, shown dimmed so dev servers stand out.
+export function isSystem(pid: number, process: string): boolean {
+  return pid <= 4 || PROTECTED.has(process.toLowerCase());
+}
+
+// Programs using more than this much memory are shown in red.
+export const HIGH_MEMORY = 500 * 1024 * 1024;
+
 export function canStop(pid: number, process: string): string | undefined {
   if (pid <= 4) return "that's part of Windows itself";
   if (PROTECTED.has(process.toLowerCase())) return `${process} is part of Windows and stopping it can crash the computer`;
@@ -28,9 +36,13 @@ export async function openBrowser(port: number): Promise<void> {
   await execa("cmd", ["/c", "start", "", `http://localhost:${port}`], { windowsHide: true });
 }
 
-// Opens a project folder in VS Code, or File Explorer if VS Code isn't installed.
-export async function openEditor(dir: string): Promise<void> {
-  // VS Code's "code" command is a .cmd file, which Windows only runs through cmd.
-  const { exitCode } = await execa("cmd", ["/c", "code", dir], { windowsHide: true, reject: false });
-  if (exitCode !== 0) await execa("explorer", [dir], { windowsHide: true, reject: false });
+// Opens a project folder in Cursor, else VS Code, else File Explorer.
+// Their commands are .cmd files, which Windows only runs through cmd.
+export async function openEditor(dir: string): Promise<string> {
+  for (const [command, name] of [["cursor", "Cursor"], ["code", "VS Code"]]) {
+    const { exitCode } = await execa("cmd", ["/c", command, dir], { windowsHide: true, reject: false });
+    if (exitCode === 0) return name;
+  }
+  await execa("explorer", [dir], { windowsHide: true, reject: false });
+  return "File Explorer";
 }

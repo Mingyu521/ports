@@ -1,10 +1,12 @@
 import chalk from "chalk";
 import { Box, render, Text, useAnimation, useApp, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { canStop } from "./actions.ts";
+import { canStop, HIGH_MEMORY, isSystem } from "./actions.ts";
 import type { PortDetails } from "./details.ts";
 import { formatMemory, formatUptime, shorten } from "./format.ts";
 import { vexyLabel } from "./labels.ts";
+import { frameworkLabel } from "./project.ts";
+import { diff } from "./watch.ts";
 
 // Frutiger Aero colors: sky, aqua, glass and fresh green.
 const SKY = "#0a84c6";
@@ -16,25 +18,27 @@ const MINT = "#5fe3c1";
 export type Actions = {
   stop: (pid: number, force: boolean) => Promise<void>;
   openBrowser: (port: number) => Promise<void>;
-  openEditor: (dir: string) => Promise<void>;
+  openEditor: (dir: string) => Promise<string>;
 };
 
 export type DashboardProps = {
   scan: () => Promise<PortDetails[]>;
   actions: Actions;
   refreshMs?: number;
+  // Called when a program starts listening on a new port (the CLI rings the terminal bell).
+  onNewPort?: () => void;
 };
 
 const FILTERS = ["all", "projects", "vexy"] as const;
 const FILTER_NAMES = { all: "All", projects: "Dev servers", vexy: "Vexy" };
-const SORTS = ["port", "memory", "uptime"] as const;
-const SORT_NAMES = { port: "Port", memory: "Memory", uptime: "Uptime" };
+const SORTS = ["port", "memory", "uptime", "project"] as const;
+const SORT_NAMES = { port: "Port", memory: "Memory", uptime: "Uptime", project: "Project" };
 
 type Mode = { kind: "browse" } | { kind: "search" } | { kind: "confirm"; row: PortDetails };
 
 // The live dashboard: every listening port, refreshed every few seconds,
 // with keys to stop, open and filter them.
-export function Dashboard({ scan, actions, refreshMs = 3000 }: DashboardProps) {
+export function Dashboard({ scan, actions, refreshMs = 3000, onNewPort }: DashboardProps) {
   const { exit } = useApp();
   const [rows, setRows] = useState<PortDetails[] | null>(null);
   const [error, setError] = useState("");
@@ -45,19 +49,31 @@ export function Dashboard({ scan, actions, refreshMs = 3000 }: DashboardProps) {
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<Mode>({ kind: "browse" });
   const busy = useRef(false);
+  const last = useRef<PortDetails[] | null>(null);
 
-  const refresh = useCallback(async () => {
-    if (busy.current) return;
+  // Returns true when it announced a new port, so "Refreshed." doesn't cover it up.
+  const refresh = useCallback(async (): Promise<boolean> => {
+    if (busy.current) return false;
     busy.current = true;
     try {
-      setRows(await scan());
+      const next = await scan();
+      // After the first scan, tell the person about programs that just started listening.
+      const started = last.current ? diff(last.current, next).filter((c) => c.event === "started") : [];
+      if (started.length) {
+        setNote(`New: ${started.map((c) => `${c.row.process} on ${c.row.port}`).join(", ")}`);
+        onNewPort?.();
+      }
+      last.current = next;
+      setRows(next);
       setError("");
+      return started.length > 0;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       busy.current = false;
     }
-  }, [scan]);
+  }, [scan, onNewPort]);
 
   useEffect(() => {
     void refresh();
@@ -100,7 +116,7 @@ export function Dashboard({ scan, actions, refreshMs = 3000 }: DashboardProps) {
     if (input === "q" || key.escape) exit();
     else if (key.upArrow) setSelected((n) => Math.max(0, n - 1));
     else if (key.downArrow) setSelected((n) => Math.min(visible.length - 1, n + 1));
-    else if (input === "r") void refresh().then(() => setNote("Refreshed."));
+    else if (input === "r") void refresh().then((announced) => !announced && setNote("Refreshed."));
     else if (input === "f") {
       setFilter((f) => FILTERS[(FILTERS.indexOf(f) + 1) % FILTERS.length]);
       setSelected(0);
@@ -114,7 +130,12 @@ export function Dashboard({ scan, actions, refreshMs = 3000 }: DashboardProps) {
     } else if (input === "o") void act(`Opened http://localhost:${current.port}`, () => actions.openBrowser(current.port));
     else if (input === "e") {
       const dir = current.project?.dir;
-      if (dir) void act(`Opened ${dir}`, () => actions.openEditor(dir));
+      if (dir) {
+        actions.openEditor(dir).then(
+          (editor) => setNote(`Opened ${dir} in ${editor}.`),
+          (e) => setNote(`Couldn't open the folder: ${e instanceof Error ? e.message : String(e)}`),
+        );
+      }
       else setNote("No project folder found for this program.");
     }
   });
@@ -168,7 +189,7 @@ const COLUMNS: [string, number, (r: PortDetails) => string][] = [
   ["PID", 7, (r) => String(r.pid)],
   ["PROCESS", 18, (r) => r.process],
   ["PROJECT", 18, (r) => vexyLabel(r.port) ?? r.project?.name ?? ""],
-  ["FRAMEWORK", 16, (r) => r.project?.framework ?? ""],
+  ["FRAMEWORK", 18, (r) => frameworkLabel(r.project)],
   ["MEMORY", 9, (r) => formatMemory(r.memory)],
   ["UPTIME", 9, (r) => formatUptime(r.started)],
 ];
@@ -181,10 +202,15 @@ function PortTable({ rows, selected }: { rows: PortDetails[]; selected: number }
       {rows.map((r, i) => {
         const text = line(COLUMNS.map(([, , cell]) => cell(r)));
         const vexy = vexyLabel(r.port) !== undefined;
-        return i === selected ? (
-          <Text key={`${r.port}/${r.pid}`} color="white" backgroundColor={SKY} bold>{"› " + text}</Text>
-        ) : (
-          <Text key={`${r.port}/${r.pid}`} color={vexy ? MINT : undefined}>{"  " + text}</Text>
+        const heavy = (r.memory ?? 0) > HIGH_MEMORY;
+        if (i === selected) {
+          return <Text key={`${r.port}/${r.pid}`} color="white" backgroundColor={heavy ? "#c62828" : SKY} bold>{"› " + text}</Text>;
+        }
+        // Windows' own programs are dimmed; anything using over 500 MB is red.
+        return (
+          <Text key={`${r.port}/${r.pid}`} color={heavy ? "red" : vexy ? MINT : undefined} dimColor={!heavy && isSystem(r.pid, r.process)}>
+            {"  " + text}
+          </Text>
         );
       })}
     </Box>
@@ -217,12 +243,18 @@ export function arrange(rows: PortDetails[], filter: (typeof FILTERS)[number], s
   const needle = search.toLowerCase();
   return rows
     .filter((r) => filter === "all" || (filter === "vexy" ? vexyLabel(r.port) !== undefined : r.project !== undefined || vexyLabel(r.port) !== undefined))
-    .filter((r) => !needle || [r.port, r.pid, r.process, r.project?.name, r.project?.framework, vexyLabel(r.port)].some((v) => String(v ?? "").toLowerCase().includes(needle)))
+    .filter((r) => !needle || [r.port, r.pid, r.process, r.command, r.project?.name, r.project?.framework, vexyLabel(r.port)].some((v) => String(v ?? "").toLowerCase().includes(needle)))
     .sort((a, b) =>
       sort === "memory" ? (b.memory ?? 0) - (a.memory ?? 0)
       : sort === "uptime" ? (a.started?.getTime() ?? Infinity) - (b.started?.getTime() ?? Infinity)
+      : sort === "project" ? projectName(a).localeCompare(projectName(b)) || a.port - b.port
       : a.port - b.port || a.pid - b.pid,
     );
+}
+
+// Sorts named projects first, A to Z, then everything else.
+function projectName(r: PortDetails): string {
+  return vexyLabel(r.port) ?? r.project?.name ?? "\uffff";
 }
 
 function gradient(text: string, colors: string[]): string {

@@ -7,7 +7,7 @@ import { render } from "ink-testing-library";
 import { arrange, Dashboard } from "../dist/dashboard.js";
 
 const rows = [
-  { port: 135, pid: 1032, process: "svchost.exe", memory: 10e6 },
+  { port: 135, pid: 1032, process: "svchost.exe", memory: 10e6, command: "svchost.exe -k RPCSS" },
   { port: 3000, pid: 8812, process: "node.exe", memory: 90e6, project: { name: "vexy", framework: "Next.js", dir: "C:\\code\\vexy" } },
   { port: 5173, pid: 7001, process: "node.exe", memory: 50e6, project: { name: "shop", framework: "Vite", dir: "C:\\code\\shop" } },
 ];
@@ -18,17 +18,20 @@ test("filters, searches and sorts", () => {
   assert.deepEqual(arrange(rows, "vexy", "port", "").map((r) => r.port), [3000]);
   assert.deepEqual(arrange(rows, "all", "memory", "").map((r) => r.port), [3000, 5173, 135]);
   assert.deepEqual(arrange(rows, "all", "port", "vite").map((r) => r.port), [5173]);
+  assert.deepEqual(arrange(rows, "all", "port", "rpcss").map((r) => r.port), [135]);
+  assert.deepEqual(arrange(rows, "all", "project", "").map((r) => r.port), [5173, 3000, 135]);
 });
 
-test("the dashboard lists ports and stops one after asking", async () => {
+test("the dashboard lists ports and stops one after asking", async (t) => {
   const stopped: [number, boolean][] = [];
   const opened: number[] = [];
   const actions = {
     stop: async (pid: number, force: boolean) => void stopped.push([pid, force]),
     openBrowser: async (port: number) => void opened.push(port),
-    openEditor: async () => {},
+    openEditor: async () => "Cursor",
   };
   const app = render(createElement(Dashboard, { scan: async () => rows, actions, refreshMs: 60_000 }));
+  t.after(() => app.unmount());
   await tick();
   let frame = plain(app.lastFrame() ?? "");
   assert.match(frame, /Calvin is watching 3 ports/);
@@ -58,5 +61,26 @@ test("the dashboard lists ports and stops one after asking", async () => {
   frame = plain(app.lastFrame() ?? "");
   assert.match(frame, /Filter: Dev servers/);
   assert.doesNotMatch(frame, /svchost/);
+  app.unmount();
+});
+
+test("the dashboard announces a program that starts listening", async (t) => {
+  let scans = 0;
+  let bells = 0;
+  const scan = async () => (scans++ === 0 ? rows.slice(0, 2) : rows);
+  const actions = { stop: async () => {}, openBrowser: async () => {}, openEditor: async () => "VS Code" };
+  const app = render(createElement(Dashboard, { scan, actions, refreshMs: 60_000, onNewPort: () => bells++ }));
+  t.after(() => app.unmount());
+  await tick();
+  assert.equal(bells, 0);
+  app.stdin.write("r");
+  await tick();
+  assert.match(plain(app.lastFrame() ?? ""), /New: node\.exe on 5173/);
+  assert.equal(bells, 1);
+  app.stdin.write("\u001B[B");
+  await tick();
+  app.stdin.write("e");
+  await tick();
+  assert.match(plain(app.lastFrame() ?? ""), /in VS Code/);
   app.unmount();
 });
