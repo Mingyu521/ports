@@ -49,10 +49,11 @@ In PowerShell:
 git clone https://github.com/Mingyu521/ports
 cd ports
 npm install
+npm run build
 npm link
 ```
 
-`npm install` also builds the command. `npm link` installs `ports` globally, so it works from any folder. Open a new PowerShell window and run:
+`npm run build` turns the TypeScript into the runnable command. Newer versions of npm skip the automatic build step during `npm install`, so run it yourself. `npm link` installs `ports` globally, so it works from any folder. Open a new PowerShell window and run:
 
 ```powershell
 ports list
